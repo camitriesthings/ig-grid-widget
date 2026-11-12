@@ -212,6 +212,7 @@ textarea{resize:vertical;min-height:70px}
   </div>
   <div class="field-row">
     <div><label>Attachments</label><input type="text" id="propAttach" value="Attachments"/></div>
+    <div><label>Cover (Reel thumbnail)</label><input type="text" id="propCover" value="Cover"/></div>
   </div>
   <div class="field-row">
     <div><label>Max Posts</label><input type="number" id="maxPosts" value="30" min="3" max="60"/></div>
@@ -390,6 +391,7 @@ async function connect(){
     propOrder:document.getElementById('propOrder').value.trim()||'Order',
     propPin:document.getElementById('propPin').value.trim()||'Pin Post',
     propAttach:document.getElementById('propAttach').value.trim()||'Attachments',
+    propCover:document.getElementById('propCover').value.trim()||'Cover',
     maxPosts:parseInt(document.getElementById('maxPosts').value)||30,
   };
   document.getElementById('setup').style.display='none';
@@ -459,12 +461,26 @@ function parsePosts(results){
     const attachFiles = pr[cfg.propAttach]?.files || [];
     const attachUrls = attachFiles.map(f => f?.file?.url || f?.external?.url).filter(Boolean);
 
-    // Primary display URL: Image URL field first, then first attachment
+    // Cover image for Reels (shown in grid, video plays in lightbox)
+    const coverUrl =
+      pr[cfg.propCover]?.files?.[0]?.file?.url ||
+      pr[cfg.propCover]?.files?.[0]?.external?.url ||
+      pr[cfg.propCover]?.url || '';
+
     const imageUrl =
       pr[cfg.propImage]?.url ||
       pr[cfg.propImage]?.files?.[0]?.file?.url ||
       pr[cfg.propImage]?.files?.[0]?.external?.url ||
       attachUrls[0] || '';
+
+    // Cover image for Reels (shown in grid instead of video)
+    const coverUrl =
+      pr[cfg.propCover]?.files?.[0]?.file?.url ||
+      pr[cfg.propCover]?.files?.[0]?.external?.url ||
+      pr[cfg.propCover]?.url || '';
+
+    // Grid shows cover for reels, otherwise imageUrl
+    const gridUrl = coverUrl || imageUrl;
 
     // All media for carousel/video (use attachments if multiple, else wrap imageUrl)
     const mediaFiles = attachUrls.length > 0 ? attachUrls : (imageUrl ? [imageUrl] : []);
@@ -485,7 +501,7 @@ function parsePosts(results){
     const pillar=pr[cfg.propPillar]?.select?.name||'';
     const order=pr[cfg.propOrder]?.number??(i+1);
     const pinned=pr[cfg.propPin]?.checkbox||false;
-    return{id:p.id,imageUrl,mediaFiles,mediaType,title,caption,date,dateShort,status,platform,format,pillar,order,pinned,soon};
+    return{id:p.id,imageUrl:gridUrl,mediaFiles,mediaType,title,caption,date,dateShort,status,platform,format,pillar,order,pinned,soon};
   });
 }
 
