@@ -211,6 +211,9 @@ textarea{resize:vertical;min-height:70px}
     <div><label>Pin Post</label><input type="text" id="propPin" value="Pin Post"/></div>
   </div>
   <div class="field-row">
+    <div><label>Attachments</label><input type="text" id="propAttach" value="Attachments"/></div>
+  </div>
+  <div class="field-row">
     <div><label>Max Posts</label><input type="number" id="maxPosts" value="30" min="3" max="60"/></div>
   </div>
   <button class="btn-primary" onclick="connect()">Connect & Load Grid →</button>
@@ -307,8 +310,18 @@ textarea{resize:vertical;min-height:70px}
 <!-- ══ LIGHTBOX ══ -->
 <div id="lightbox" onclick="closeLightbox()">
   <div class="lb-sheet" onclick="event.stopPropagation()">
-    <div class="lb-img-wrap">
-      <img id="lbImg" src="" alt=""/>
+    <div class="lb-img-wrap" style="position:relative;background:#000">
+      <!-- Image -->
+      <img id="lbImg" src="" alt="" style="width:100%;aspect-ratio:1;object-fit:cover;display:none"/>
+      <!-- Video -->
+      <video id="lbVideo" controls style="width:100%;aspect-ratio:1;object-fit:cover;display:none;background:#000"></video>
+      <!-- Carousel nav -->
+      <button id="lbPrev" onclick="carouselNav(-1)" style="display:none;position:absolute;left:8px;top:50%;transform:translateY(-50%);background:rgba(255,255,255,0.85);border:none;border-radius:50%;width:32px;height:32px;font-size:1rem;cursor:pointer;z-index:5;display:none;align-items:center;justify-content:center">‹</button>
+      <button id="lbNext" onclick="carouselNav(1)" style="display:none;position:absolute;right:8px;top:50%;transform:translateY(-50%);background:rgba(255,255,255,0.85);border:none;border-radius:50%;width:32px;height:32px;font-size:1rem;cursor:pointer;z-index:5;display:none;align-items:center;justify-content:center">›</button>
+      <!-- Dots -->
+      <div id="lbDots" style="position:absolute;bottom:10px;left:0;right:0;display:flex;justify-content:center;gap:5px;z-index:5"></div>
+      <!-- Media type badge -->
+      <div id="lbTypeBadge" style="position:absolute;top:10px;right:10px;background:rgba(0,0,0,.5);color:#fff;border-radius:6px;padding:3px 8px;font-size:.72rem;font-weight:700;display:none"></div>
       <button class="lb-close" onclick="closeLightbox()">✕</button>
     </div>
     <div class="lb-actions">
@@ -376,6 +389,7 @@ async function connect(){
     propPillar:document.getElementById('propPillar').value.trim()||'Content Pillar',
     propOrder:document.getElementById('propOrder').value.trim()||'Order',
     propPin:document.getElementById('propPin').value.trim()||'Pin Post',
+    propAttach:document.getElementById('propAttach').value.trim()||'Attachments',
     maxPosts:parseInt(document.getElementById('maxPosts').value)||30,
   };
   document.getElementById('setup').style.display='none';
@@ -441,7 +455,21 @@ async function notionPatch(pageId,orderVal){
 function parsePosts(results){
   return results.map((p,i)=>{
     const pr=p.properties;
-    const imageUrl=pr[cfg.propImage]?.url||pr[cfg.propImage]?.files?.[0]?.file?.url||pr[cfg.propImage]?.files?.[0]?.external?.url||'';
+    // Collect all attachment files
+    const attachFiles = pr[cfg.propAttach]?.files || [];
+    const attachUrls = attachFiles.map(f => f?.file?.url || f?.external?.url).filter(Boolean);
+
+    // Primary display URL: Image URL field first, then first attachment
+    const imageUrl =
+      pr[cfg.propImage]?.url ||
+      pr[cfg.propImage]?.files?.[0]?.file?.url ||
+      pr[cfg.propImage]?.files?.[0]?.external?.url ||
+      attachUrls[0] || '';
+
+    // All media for carousel/video (use attachments if multiple, else wrap imageUrl)
+    const mediaFiles = attachUrls.length > 0 ? attachUrls : (imageUrl ? [imageUrl] : []);
+    const isVideo = (url) => /\.(mp4|mov|webm|ogg)(\?|$)/i.test(url);
+    const mediaType = mediaFiles.length > 1 ? 'carousel' : (mediaFiles[0] && isVideo(mediaFiles[0]) ? 'video' : 'image');
     const title=pr[cfg.propTitle]?.title?.map(t=>t.plain_text).join('')||'';
     const caption=pr[cfg.propCaption]?.rich_text?.map(t=>t.plain_text).join('')||'';
     let date='',dateShort='',soon=false;
@@ -457,7 +485,7 @@ function parsePosts(results){
     const pillar=pr[cfg.propPillar]?.select?.name||'';
     const order=pr[cfg.propOrder]?.number??(i+1);
     const pinned=pr[cfg.propPin]?.checkbox||false;
-    return{id:p.id,imageUrl,title,caption,date,dateShort,status,platform,format,pillar,order,pinned,soon};
+    return{id:p.id,imageUrl,mediaFiles,mediaType,title,caption,date,dateShort,status,platform,format,pillar,order,pinned,soon};
   });
 }
 
@@ -616,9 +644,12 @@ async function refreshGrid(){
   catch(e){showErr(e.message);}
 }
 
+let lbMediaFiles=[], lbCurrentIdx=0;
+const isVideo=(url)/\.(mp4|mov|webm|ogg)(\?|$)/i.test(url);
+
 function openLightbox(post){
-  if(!post.imageUrl)return;
-  document.getElementById('lbImg').src=post.imageUrl;
+  if(!post.mediaFiles||post.mediaFiles.length===0)return;
+  lbMediaFiles=post.mediaFiles; lbCurrentIdx=0;
   document.getElementById('lbUsername').textContent=profile.username;
   const captionText=post.caption||post.title||'';
   document.getElementById('lbCaption').textContent=captionText;
@@ -628,14 +659,89 @@ function openLightbox(post){
   if(post.format){const t=document.createElement('span');t.className='lb-tag s-default';t.textContent=post.format;tags.appendChild(t);}
   if(post.pillar){const t=document.createElement('span');t.className='lb-tag '+pillarClass(post.pillar);t.textContent=post.pillar;tags.appendChild(t);}
   document.getElementById('lbCopyBtn').style.display=captionText?'block':'none';
+
+  // Build dots for carousel
+  const dotsWrap=document.getElementById('lbDots'); dotsWrap.innerHTML='';
+  if(lbMediaFiles.length>1){
+    lbMediaFiles.forEach((_,i)=>{
+      const dot=document.createElement('div');
+      dot.style.cssText=`width:6px;height:6px;border-radius:50%;background:${i===0?'#fff':'rgba(255,255,255,0.5)'};transition:background .2s;cursor:pointer`;
+      dot.onclick=()=>goToSlide(i);
+      dotsWrap.appendChild(dot);
+    });
+  }
+
+  // Show/hide nav arrows
+  document.getElementById('lbPrev').style.display=lbMediaFiles.length>1?'flex':'none';
+  document.getElementById('lbNext').style.display=lbMediaFiles.length>1?'flex':'none';
+
+  // Type badge
+  const badge=document.getElementById('lbTypeBadge');
+  if(post.mediaType==='carousel'){badge.textContent='⊞ '+lbMediaFiles.length+' slides';badge.style.display='block';}
+  else if(post.mediaType==='video'){badge.textContent='▶ Reel';badge.style.display='block';}
+  else{badge.style.display='none';}
+
+  renderLbSlide(0);
   document.getElementById('lightbox').classList.add('open');
 }
-function closeLightbox(){document.getElementById('lightbox').classList.remove('open');document.getElementById('lbImg').src='';}
+
+function renderLbSlide(idx){
+  lbCurrentIdx=idx;
+  const url=lbMediaFiles[idx];
+  const img=document.getElementById('lbImg');
+  const vid=document.getElementById('lbVideo');
+
+  // Stop any playing video
+  if(!vid.paused)vid.pause();
+
+  if(isVideo(url)){
+    img.style.display='none'; vid.style.display='block';
+    vid.src=url; vid.load();
+  } else {
+    vid.style.display='none'; img.style.display='block';
+    img.src=url;
+  }
+
+  // Update dots
+  const dots=document.getElementById('lbDots').children;
+  for(let i=0;i<dots.length;i++){dots[i].style.background=i===idx?'#fff':'rgba(255,255,255,0.5)';}
+
+  // Update type badge slide counter
+  if(lbMediaFiles.length>1){
+    document.getElementById('lbTypeBadge').textContent=`⊞ ${idx+1} / ${lbMediaFiles.length}`;
+  }
+}
+
+function goToSlide(idx){if(idx>=0&&idx<lbMediaFiles.length)renderLbSlide(idx);}
+function carouselNav(dir){
+  const next=(lbCurrentIdx+dir+lbMediaFiles.length)%lbMediaFiles.length;
+  renderLbSlide(next);
+}
+
+function closeLightbox(){
+  const vid=document.getElementById('lbVideo');
+  if(!vid.paused)vid.pause();
+  document.getElementById('lightbox').classList.remove('open');
+  document.getElementById('lbImg').src='';
+  document.getElementById('lbVideo').src='';
+}
 function copyCaption(){
   const text=document.getElementById('lbCaption').textContent;if(!text)return;
   navigator.clipboard.writeText(text).then(()=>{const btn=document.getElementById('lbCopyBtn');btn.textContent='✅ Copied!';setTimeout(()=>btn.textContent='📋 Copy caption',2000);});
 }
-document.addEventListener('keydown',e=>{if(e.key==='Escape')closeLightbox();});
+document.addEventListener('keydown',e=>{
+  if(e.key==='Escape')closeLightbox();
+  if(e.key==='ArrowLeft')carouselNav(-1);
+  if(e.key==='ArrowRight')carouselNav(1);
+});
+
+// Touch swipe for carousel
+let touchStartX=0;
+document.getElementById('lightbox').addEventListener('touchstart',e=>touchStartX=e.touches[0].clientX,{passive:true});
+document.getElementById('lightbox').addEventListener('touchend',e=>{
+  const diff=touchStartX-e.changedTouches[0].clientX;
+  if(Math.abs(diff)>50)carouselNav(diff>0?1:-1);
+},{passive:true});
 
 function toggleDotsMenu(){document.getElementById('dotsMenu').classList.toggle('open');}
 function closeDotsMenu(){document.getElementById('dotsMenu').classList.remove('open');}
