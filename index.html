@@ -645,7 +645,7 @@ async function refreshGrid(){
 }
 
 let lbMediaFiles=[], lbCurrentIdx=0;
-const isVideo=(url)/\.(mp4|mov|webm|ogg)(\?|$)/i.test(url);
+const isVideo=(url)=>/\.(mp4|mov|webm|ogg)(\?|$)/i.test(url);
 
 function openLightbox(post){
   if(!post.mediaFiles||post.mediaFiles.length===0)return;
